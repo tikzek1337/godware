@@ -10,6 +10,8 @@ import glfw
 import OpenGL.GL as gl
 import requests
 import sys
+import json
+import threading
 
 print("waiting for cs2.exe... // Telegram channel - @godware1337 // creator - @tikzek1337")
 
@@ -22,18 +24,35 @@ if hasattr(sys, "frozen"):
 WINDOW_WIDTH = 1920
 WINDOW_HEIGHT = 1080
 
-esp_rendering = 1
-esp_mode = 1
-line_rendering = 1
-hp_bar_rendering = 1
-head_hitbox_rendering = 1
-bons = 1
-weapon = 1
-bomb_esp = 1
+CONFIG_FILE = "config.json"
+DEFAULT_CONFIG = {
+    "esp_rendering": True,
+    "box_rendering": True,
+    "hp_bar_rendering": True,
+    "hp_text_rendering": False,
+    "bons": True,
+    "esp_mode_enemies_only": True,
+    "box_line_thickness": 1.2
+}
+
+def initialize_config():
+    if not os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(DEFAULT_CONFIG, f, indent=4)
 
 print("getting offsets...")
 offsets = requests.get('https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/offsets.json').json()
 client_dll = requests.get('https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/client_dll.json').json()
+
+try:
+    m_bBombTicking = client_dll['client.dll']['classes']['C_PlantedC4']['fields']['m_bBombTicking']
+    m_flC4Blow = client_dll['client.dll']['classes']['C_PlantedC4']['fields']['m_flC4Blow']
+    m_flGameTime = offsets['client.dll']['dwGlobalVars'] + 0x2C # Using curtime
+except KeyError:
+    print("Warning: Could not find bomb timer offsets. Using hardcoded values.")
+    m_bBombTicking = 0xE80
+    m_flC4Blow = 0xED0
+    m_flGameTime = offsets['client.dll']['dwGlobalVars'] + 0x2C
 
 dwEntityList = offsets['client.dll']['dwEntityList']
 dwLocalPlayerPawn = offsets['client.dll']['dwLocalPlayerPawn']
@@ -55,25 +74,69 @@ m_AttributeManager = client_dll['client.dll']['classes']['C_EconEntity']['fields
 m_Item = client_dll['client.dll']['classes']['C_AttributeContainer']['fields']['m_Item']
 m_iItemDefinitionIndex = client_dll['client.dll']['classes']['C_EconItemView']['fields']['m_iItemDefinitionIndex']
 
-while True:
-    time.sleep(1)
+try:
+    m_vecAbsOrigin = client_dll['client.dll']['classes']['CGameSceneNode']['fields']['m_vecAbsOrigin']
+except KeyError:
+    print("Warning: Could not find 'm_vecAbsOrigin'. Using hardcoded 0x160.")
+    m_vecAbsOrigin = 0x160
+
+try:
+    m_sSanitizedPlayerName = client_dll['client.dll']['classes']['CCSPlayerController']['fields']['m_sSanitizedPlayerName']
+except KeyError:
+    print("Warning: Could not find 'm_sSanitizedPlayerName'. Using hardcoded 0x750.")
+    m_sSanitizedPlayerName = 0x750
+
+try:
+    m_hParent = client_dll['client.dll']['classes']['CGameSceneNode']['fields']['m_hParent']
+except KeyError:
+    print("Warning: Could not find 'm_hParent'. Using hardcoded 0x30.")
+    m_hParent = 0x30
+
+try:
+    m_pEntity = client_dll['client.dll']['classes']['CEntityInstance']['fields']['m_pEntity']
+except KeyError:
+    print("Warning: Could not find 'm_pEntity'. Using hardcoded 0x10.")
+    m_pEntity = 0x10
+
+try:
+    m_designerName = client_dll['client.dll']['classes']['CEntityIdentity']['fields']['m_designerName']
+except KeyError:
+    print("Warning: Could not find 'm_designerName'. Using hardcoded 0x20.")
+    m_designerName = 0x20
+
+
+pm = None
+client = None
+
+while pm is None:
     try:
         pm = pymem.Pymem("cs2.exe")
-        client = pymem.process.module_from_name(pm.process_handle, "client.dll").lpBaseOfDll
-        break
-    except:
-        pass
-
-time.sleep(1)
-os.system("cls")
-
+    except pymem.exception.ProcessNotFound:
+        time.sleep(1)
+        
 print("cs2.exe found!")
 print("getting client.dll...")
 
-pm = pymem.Pymem("cs2.exe")
-client = pymem.process.module_from_name(pm.process_handle, "client.dll").lpBaseOfDll
-
+while client is None:
+    try:
+        client = pymem.process.module_from_name(pm.process_handle, "client.dll").lpBaseOfDll
+    except:
+        time.sleep(0.5)
 print("client.dll found!")
+
+time.sleep(1)
+os.system("cls")
+print("""⣇⣿⡿⣿⠏⣸⣎⣻⣟⣿⣿⣿⢿⣿⣿⣿⣿⠟⣩⣼⢆⠻⣿⡆⣿⣿⣿⣿⣿⣿
+⢸⣿⡿⠋⠈⠉⠄⠉⠻⣽⣿⣿⣯⢿⣿⣿⡻⠋⠉⠄⠈⠑⠊⠃⣿⣿⣿⣿⣿⣿
+⣿⣿⠄⠄⣰⠱⠿⠄⠄⢨⣿⣿⣿⣿⣿⣿⡆⢶⠷⠄⠄⢄⠄⠄⣿⣿⣿⣿⣿⣿
+⣿⣿⠘⣤⣿⡀⣤⣤⣤⢸⣿⣿⣿⣿⣿⣿⡇⢠⣤⣤⡄⣸⣀⡆⣿⣿⣿⣿⣿⣿
+⣿⣿⡀⣿⣿⣷⣌⣉⣡⣾⣿⣿⣿⣿⣿⣿⣿⣌⣛⣋⣴⣿⣿⢣⣿⣿⣿⣿⡟⣿
+⢹⣿⢸⣿⣻⣶⣿⢿⣿⣿⣿⢿⣿⣿⣻⣿⣿⣿⡿⣿⣭⡿⠻⢸⣿⣿⣿⣿⡇⢹
+⠈⣿⡆⠻⣿⣏⣿⣿⣿⣿⣿⡜⣭⣍⢻⣿⣿⣿⣿⣿⣛⣿⠃⣿⣿⣿⣿⡿⠄⣼ Have a good game)""")
+
+initialize_config()
+os.system("start cmd /c python menu.py")
+
 
 def w2s(mtx, posx, posy, posz, width, height):
     screenW = mtx[12]*posx + mtx[13]*posy + mtx[14]*posz + mtx[15]
@@ -122,9 +185,10 @@ def draw_bones(draw_list, pm, bone_matrix, view_matrix, width, height):
     except Exception as e:
         pass
 
-def esp(draw_list):
+def esp(draw_list, config):
     try:
         view_matrix = [pm.read_float(client + dwViewMatrix + i * 4) for i in range(16)]
+        
         local_player = pm.read_longlong(client + dwLocalPlayerPawn)
         local_team = pm.read_int(local_player + m_iTeamNum)
         entity_list = pm.read_longlong(client + dwEntityList)
@@ -160,7 +224,7 @@ def esp(draw_list):
                 continue
 
             entity_team = pm.read_int(entity_pawn + m_iTeamNum)
-            if esp_mode == 1 and entity_team == local_team:
+            if config.get("esp_mode_enemies_only", True) and entity_team == local_team:
                 continue
 
             color = imgui.get_color_u32_rgba(1, 0, 0, 1) if entity_team != local_team else imgui.get_color_u32_rgba(0, 1, 0, 1)
@@ -180,20 +244,23 @@ def esp(draw_list):
             leg_pos = w2s(view_matrix, headX, headY, legZ, WINDOW_WIDTH, WINDOW_HEIGHT)
 
             delta = abs(head_pos[1] - leg_pos[1])
+            
             leftX = head_pos[0] - delta / 3
             rightX = head_pos[0] + delta / 3
 
-            draw_list.add_line(leftX,  leg_pos[1],  rightX, leg_pos[1],  color, 1.2)
-            draw_list.add_line(leftX,  leg_pos[1],  leftX,  head_pos[1], color, 1.2)
-            draw_list.add_line(rightX, leg_pos[1],  rightX, head_pos[1], color, 1.2)
-            draw_list.add_line(leftX,  head_pos[1], rightX, head_pos[1], color, 1.2)
+            if config.get("box_rendering", True):
+                line_thickness = config.get("box_line_thickness", 1.2)
+                draw_list.add_line(leftX,  leg_pos[1],  rightX, leg_pos[1],  color, line_thickness)
+                draw_list.add_line(leftX,  leg_pos[1],  leftX,  head_pos[1], color, line_thickness)
+                draw_list.add_line(rightX, leg_pos[1],  rightX, head_pos[1], color, line_thickness)
+                draw_list.add_line(leftX,  head_pos[1], rightX, head_pos[1], color, line_thickness)
 
-            if bons:
+            if config.get("bons", True):
                 draw_bones(draw_list, pm, bone_matrix, view_matrix, WINDOW_WIDTH, WINDOW_HEIGHT)
 
             entity_hp = pm.read_int(entity_pawn + m_iHealth)
 
-            if hp_bar_rendering:
+            if config.get("hp_bar_rendering", True):
                 hp_bar_height = delta
                 hp_bar_width = 2
                 hp_bar_x = leftX - hp_bar_width - 3
@@ -222,6 +289,15 @@ def esp(draw_list):
                     hp_bar_x + hp_bar_width, hp_bar_y_bottom,
                     hp_color
                 )
+            
+            if config.get("hp_text_rendering", False):
+                hp_text = str(entity_hp)
+                text_color = imgui.get_color_u32_rgba(1, 1, 1, 1)
+                text_size = imgui.calc_text_size(hp_text)
+                
+                # Position the text centered, just above the head.
+                draw_list.add_text(head_pos[0] - text_size.x / 2, head_pos[1] - text_size.y - 2, text_color, hp_text)
+
         except pymem.exception.MemoryReadError:
             continue
         except Exception:
@@ -267,31 +343,52 @@ def main():
     impl = GlfwRenderer(window)
     impl.refresh_font_texture()
 
-    prev_time = time.perf_counter()
-    fps = 0
+    last_time = time.time()
     while not glfw.window_should_close(window):
-        now = time.perf_counter()
-        dt = now - prev_time
-        prev_time = now
-        if dt > 0:
-            fps = int(1.0 / dt)
         glfw.poll_events()
         impl.process_inputs()
         imgui.new_frame()
+
         imgui.set_next_window_size(WINDOW_WIDTH, WINDOW_HEIGHT)
-        imgui.set_next_window_position(0,0)
+        imgui.set_next_window_position(0, 0)
+        
         imgui.begin("overlay", flags=imgui.WINDOW_NO_TITLE_BAR | imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_SCROLLBAR | imgui.WINDOW_NO_COLLAPSE | imgui.WINDOW_NO_BACKGROUND)
         draw_list = imgui.get_window_draw_list()
-        esp(draw_list)
-        fps_text = f"FPS: {fps}"
+
+        watermark1 = "telegram channel - @godware1337"
+        watermark2 = "creator - tikzek"
+        text_size1 = imgui.calc_text_size(watermark1)
+        text_size2 = imgui.calc_text_size(watermark2)
+
+        draw_list.add_text(WINDOW_WIDTH - text_size1.x - 10, 10, imgui.get_color_u32_rgba(1, 1, 1, 0.5), watermark1)
+        draw_list.add_text(WINDOW_WIDTH - text_size2.x - 10, 10 + text_size1.y + 5, imgui.get_color_u32_rgba(1, 1, 1, 0.5), watermark2)
+
+        version_text = "Version - 1.1.3"
+        text_size = imgui.calc_text_size(version_text)
+        draw_list.add_text(
+            WINDOW_WIDTH - text_size.x - 10,
+            WINDOW_HEIGHT - text_size.y - 10,
+            imgui.get_color_u32_rgba(1, 1, 1, 0.5),
+            version_text
+        )
+
+        config = DEFAULT_CONFIG
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+        except (IOError, json.JSONDecodeError):
+            pass
+                
+        if config.get("esp_rendering"):
+            esp(draw_list, config)
+
+        current_time = time.time()
+        fps = 1.0 / (current_time - last_time) if (current_time - last_time) > 0 else 0
+        last_time = current_time
+
+        fps_text = f"FPS: {fps:.0f}"
         draw_list.add_text(10, 10, imgui.get_color_u32_rgba(1, 1, 1, 0.5), fps_text)
-        watermark_text1 = "telegram channel - @godware1337"
-        watermark_text2 = "creator - @tikzek1337"
-        text_width1 = imgui.calc_text_size(watermark_text1)[0]
-        text_width2 = imgui.calc_text_size(watermark_text2)[0]
-        text_height = imgui.calc_text_size(watermark_text1)[1]
-        draw_list.add_text(WINDOW_WIDTH - text_width1 - 10, 10, imgui.get_color_u32_rgba(1, 1, 1, 0.5), watermark_text1)
-        draw_list.add_text(WINDOW_WIDTH - text_width2 - 10, 10 + text_height + 5, imgui.get_color_u32_rgba(1, 1, 1, 0.5), watermark_text2)
+        
         imgui.end()
         imgui.end_frame()
         gl.glClearColor(0, 0, 0, 0)
